@@ -13,7 +13,7 @@
 [📥 下载可执行文件 (Releases)](https://github.com/Enosensu/MinimalistStylizer/releases) | [💻 查看源码](https://github.com/Enosensu/MinimalistStylizer?tab=readme-ov-file#%E2%80%8D-开发安装与运行-development)
 
 <br>
-<img src="assets/screenshot.png" alt="Minimalist Stylizer Interface" width="800" style="border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.15);">
+<img src="assets/screenshot_2.png" alt="Minimalist Stylizer Interface" width="800" style="border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.15);">
 <br>
 
 </div>
