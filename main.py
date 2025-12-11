@@ -4,13 +4,9 @@ import numpy as np
 import os
 import time
 import base64
-import tempfile  # [新增] 用于创建临时目录
-import shutil    # [新增] 用于清理资源
-import ctypes  # [新增] 用于设置 Windows 任务栏图标 ID
-
-# 移除对 resources_rc 和 qdarkstyle 的依赖，实现完全独立的单文件运行
-# try: import resources_rc ... (已移除)
-# try: import qdarkstyle ... (已移除)
+import tempfile
+import shutil
+import ctypes
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLabel, QPushButton, QSlider, QFileDialog, QTabWidget, 
@@ -23,80 +19,49 @@ from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QPointF, QRectF, QSize
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QColor, QWheelEvent, QMouseEvent, QAction, QIcon, QPen, QBrush, QKeySequence, QShortcut
 
 # ==========================================
-# 1. 嵌入式资源管理器 (核心修改)
+# 1. 嵌入式资源管理器
 # ==========================================
 class ResourceManager:
-    """
-    在运行时自动生成所需的 SVG 图标文件，解决 Base64 显示问题，
-    同时实现单文件运行，无需外部 .rc 或 .py 资源文件。
-    """
     def __init__(self):
-        # 创建临时目录
         self.temp_dir = tempfile.mkdtemp(prefix="gemini_style_")
         self.icons = {}
         self._create_svg_files()
 
     def _create_svg_files(self):
-        # 定义 SVG 内容 (纯白色 #ffffff，适应暗色背景)
-        # 这里的 path 数据绘制了标准的三角形箭头
         svg_up = '''<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12">
           <path fill="#ffffff" d="M6 3 L10 9 L2 9 Z"/>
         </svg>'''
-
         svg_down = '''<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12">
           <path fill="#ffffff" d="M6 9 L2 3 L10 3 Z"/>
         </svg>'''
-
-        # 写入文件
         up_path = os.path.join(self.temp_dir, "up.svg")
         down_path = os.path.join(self.temp_dir, "down.svg")
-
-        with open(up_path, "w") as f:
-            f.write(svg_up)
-        with open(down_path, "w") as f:
-            f.write(svg_down)
-
-        # 存储为 Qt 样式表可用的路径格式 (Windows 下需替换反斜杠)
+        with open(up_path, "w") as f: f.write(svg_up)
+        with open(down_path, "w") as f: f.write(svg_down)
         self.icons['up'] = up_path.replace("\\", "/")
         self.icons['down'] = down_path.replace("\\", "/")
 
     def get_icon_url(self, name):
-        """返回 CSS url(...) 格式的字符串"""
         path = self.icons.get(name, "")
         return f'url("{path}")'
 
     def cleanup(self):
-        """程序退出时清理临时文件"""
-        try:
-            shutil.rmtree(self.temp_dir)
-        except:
-            pass
+        try: shutil.rmtree(self.temp_dir)
+        except: pass
 
-# 初始化全局资源管理器
 RES_MANAGER = ResourceManager()
-
-# ==========================================
-# 资源定义
-# ==========================================
-
-# 复选框仍使用 Base64 (Qt默认样式对PNG Base64支持较好)
 ICON_CHECK_WHITE = 'url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABmJLR0QA/wD/AP+gvaeTAAAAbklEQVQ4je2S0Q3AIAxD78M6Q3dI958u0g3Sqf+0Ug0i+sA5X6wEcOzYJAn8M2RInz1CDsCR09puvZaF/CAlhHnN77y2CwBExN3+rNfS6iBvB3k7yN9B/g7+d/C/g/8d/O/g/8d/O/g/8d/O/g7yDvIC7wB/k0315YVvOAAAAAASUVORK5CYII=")'
-
-# 获取箭头图标的物理文件路径 (最稳健方案)
 ICON_UP_PATH = RES_MANAGER.get_icon_url("up")
 ICON_DOWN_PATH = RES_MANAGER.get_icon_url("down")
 
-
 # ==========================================
-# 辅助函数与核心逻辑 (保持不变)
+# 辅助函数与核心逻辑
 # ==========================================
 def print_progress(current, total, message=""):
     if sys.stdout is None: return
     bar_length = 30
-    if total > 0:
-        percent = float(current) / total
-    else:
-        percent = 0
+    if total > 0: percent = float(current) / total
+    else: percent = 0
     arrow = '▓' * int(round(percent * bar_length))
     spaces = '░' * (bar_length - len(arrow))
     sys.stdout.write(f"\r[{arrow}{spaces}] {int(percent * 100)}% ({current}/{total}) | {message}")
@@ -108,19 +73,14 @@ def calculate_history_limit(img):
     pixels = h * w
     base_limit = 20
     ref_pixels = 1920 * 1080 
-    if pixels <= ref_pixels:
-        return base_limit
+    if pixels <= ref_pixels: return base_limit
     ratio = pixels / ref_pixels
     limit = int(base_limit / ratio)
     return max(3, limit)
 
 def resource_path(relative_path):
-    """ 获取资源的绝对路径，适配 PyInstaller 打包后的路径 """
-    try:
-        # PyInstaller 会创建一个临时文件夹，并将路径存储在 _MEIPASS 中
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
+    try: base_path = sys._MEIPASS
+    except Exception: base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
 class ImageProcessingThread(QThread):
@@ -141,6 +101,7 @@ class ImageProcessingThread(QThread):
             s_space = float(self.params.get('sigma_space', 25))
             s_color = float(self.params.get('sigma_color', 15))
             
+            # --- 核心平滑与色块处理 ---
             if method == 'html_hard':
                 u_img = cv2.UMat(self.cv_img)
                 pre_smooth = cv2.bilateralFilter(u_img, 5, s_color, s_space)
@@ -186,7 +147,6 @@ class ImageProcessingThread(QThread):
                 edge_indices = (flat_mask == 0)
                 result_np[edge_indices] = img_np[edge_indices]
                 result_u = cv2.UMat(result_np)
-
             else:
                 u_img = cv2.UMat(self.cv_img)
                 result_u = u_img
@@ -200,6 +160,7 @@ class ImageProcessingThread(QThread):
 
             if self.isInterruptionRequested(): self.result_ready.emit(self.index, None, None); return
 
+            # --- K-Means 量化 ---
             result_np = result_u.get()
             if self.params.get('enable_kmeans', False):
                 k = self.params.get('k_value', 8)
@@ -211,33 +172,51 @@ class ImageProcessingThread(QThread):
                 result_np = res.reshape((result_np.shape))
                 result_u = cv2.UMat(result_np)
 
+            # --- 边缘提取 (Layer Logic) ---
             edge_mode = self.params.get('edge_mode', 'none')
             final_edges_mask = None 
             if edge_mode != 'none':
                 gray_final = cv2.cvtColor(result_u, cv2.COLOR_BGR2GRAY)
-                edges_out = None
                 t1 = self.params.get('canny_t1', 50)
                 t2 = self.params.get('canny_t2', 150)
                 
                 if edge_mode == 'canny':
+                    # Canny: 返回的是白线黑底，直接可用
                     edges_out = cv2.Canny(gray_final, t1, t2)
+                    final_edges_mask = edges_out.get() if hasattr(edges_out, 'get') else edges_out
+
                 elif edge_mode == 'sobel': 
+                    # Sobel
                     grad_x = cv2.Sobel(gray_final, cv2.CV_32F, 1, 0, ksize=3)
                     grad_y = cv2.Sobel(gray_final, cv2.CV_32F, 0, 1, ksize=3)
                     abs_grad_x = cv2.convertScaleAbs(grad_x)
                     abs_grad_y = cv2.convertScaleAbs(grad_y)
                     magnitude = cv2.addWeighted(abs_grad_x, 0.5, abs_grad_y, 0.5, 0)
                     _, edges_thresh = cv2.threshold(magnitude, t1, 255, cv2.THRESH_BINARY)
-                    edges_out = cv2.UMat(edges_thresh)
+                    final_edges_mask = edges_thresh.get() if hasattr(edges_thresh, 'get') else edges_thresh
+
                 elif edge_mode == 'adaptive':
+                    # Adaptive
                     gray_np_final = gray_final.get()
                     b_size = t1 if t1 % 2 == 1 else t1 + 1
                     if b_size < 3: b_size = 3
+                    # GAUSSIAN_C 返回白底黑线，INV 后变成黑底白线 (Mask)
                     edges_np = cv2.adaptiveThreshold(gray_np_final, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, b_size, t2)
-                    edges_out = cv2.UMat(edges_np)
+                    final_edges_mask = edges_np
 
-                if edges_out is not None:
-                    final_edges_mask = edges_out.get() 
+                elif edge_mode == 'dog':
+                    # [新增] DoG 高斯差分 (素描风格)
+                    gray_np = gray_final.get()
+                    sigma1 = max(0.1, t1 / 10.0) 
+                    sigma2 = sigma1 * 2.0
+                    tau = 0.85 + (t2 / 255.0) * 0.15 
+                    g1 = cv2.GaussianBlur(gray_np, (0, 0), sigma1)
+                    g2 = cv2.GaussianBlur(gray_np, (0, 0), sigma2)
+                    dog = g1.astype(np.float32) / (g2.astype(np.float32) + 1e-5)
+                    dog_u8 = np.clip(dog * 255, 0, 255).astype(np.uint8)
+                    thresh_val = 255 * tau
+                    _, edges_dog = cv2.threshold(dog_u8, thresh_val, 255, cv2.THRESH_BINARY_INV)
+                    final_edges_mask = edges_dog
 
             final_image_np = result_u.get()
             self.result_ready.emit(self.index, final_image_np, final_edges_mask)
@@ -396,8 +375,6 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("MinimalistStylizer")
         self.resize(1600, 950)
-        # [新增] 设置运行时的窗口图标
-        # 这里的 "app_icon.ico" 必须与 main.py 在同一目录下，或者打包时已包含
         icon_path = resource_path("app_icon.ico")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
@@ -487,7 +464,7 @@ class MainWindow(QMainWindow):
 
         group_edge = QGroupBox("3. 边缘增强 & 防溢色"); group_edge.setToolTip("<p><b>边缘检测作用:</b> 仅用于生成覆盖在色块上方的黑色描边层，<b>不再影响核心色块形状</b>。</p>")
         ge_layout = QVBoxLayout()
-        self.combo_edge = QComboBox(); self.combo_edge.addItems(["Sobel (防溢色/厚重)", "Canny (细线)", "Lineart (自适应)", "无"]); self.combo_edge.currentIndexChanged.connect(self.toggle_edge_params)
+        self.combo_edge = QComboBox(); self.combo_edge.addItems(["Sobel (防溢色/厚重)", "Canny (细线)", "Lineart (自适应)", "DoG (素描/柔和)", "无"]); self.combo_edge.currentIndexChanged.connect(self.toggle_edge_params)
         self.edge_params_container = QWidget(); ep_layout = QVBoxLayout(self.edge_params_container); ep_layout.setContentsMargins(0,0,0,0)
         self.c_e1, self.slider_e1, self.inp_e1 = create_slider_input("边缘阈值 (Threshold):", 1, 255, 50, "")
         self.c_e2, self.slider_e2, self.inp_e2 = create_slider_input("辅助阈值 (High):", 1, 255, 150, "")
@@ -540,7 +517,6 @@ class MainWindow(QMainWindow):
         self.update_param_labels(0); self.toggle_edge_params(0)
 
     def apply_theme(self):
-        # 定义统一颜色
         BLUE_ACCENT = "#0078d4"
         BLUE_HOVER = "#1084e0"
         BLUE_PRESSED = "#005a9e"
@@ -549,7 +525,6 @@ class MainWindow(QMainWindow):
         BORDER_COL = "#555555"
         TEXT_COL = "#e0e0e0"
 
-        # 使用 f-string 注入变量，确保图标变量被正确替换
         qss = f"""
         QMainWindow, QWidget {{ 
             background-color: {DARK_BG}; 
@@ -588,7 +563,6 @@ class MainWindow(QMainWindow):
         QCheckBox::indicator:hover {{ border-color: #888; background: #444; }}
         QCheckBox::indicator:checked {{ background-color: {BLUE_ACCENT}; border-color: {BLUE_ACCENT}; image: {ICON_CHECK_WHITE}; }}
         
-        /* 修复 QSpinBox 的样式与箭头 */
         QSpinBox, QDoubleSpinBox {{ 
             background-color: {PANEL_BG}; 
             border: 1px solid {BORDER_COL}; 
@@ -625,7 +599,6 @@ class MainWindow(QMainWindow):
             margin-right: 1px;
         }}
         
-        /* [核心修复] 使用运行时生成的 SVG 文件路径 */
         QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{ 
             image: {ICON_UP_PATH}; 
             width: 12px; 
@@ -637,14 +610,12 @@ class MainWindow(QMainWindow):
             height: 12px; 
         }}
 
-        /* 统一的按钮 Hover 状态 (蓝色边框/高亮) */
         QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover, 
         QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{ 
             background-color: #444;
             border-left: 1px solid {BLUE_HOVER};
         }}
 
-        /* 统一的按钮 Pressed 状态 (蓝色背景) */
         QSpinBox::up-button:pressed, QDoubleSpinBox::up-button:pressed, 
         QSpinBox::down-button:pressed, QDoubleSpinBox::down-button:pressed {{ 
             background-color: {BLUE_ACCENT}; 
@@ -663,7 +634,6 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(qss)
     
     def closeEvent(self, event):
-        # 退出时清理临时文件
         RES_MANAGER.cleanup()
         super().closeEvent(event)
 
@@ -677,69 +647,79 @@ class MainWindow(QMainWindow):
         spinbox.setToolTip(tooltip)
 
     def toggle_edge_params(self, index):
-        self.edge_params_container.setVisible(index < 3) # 3 is None
+        self.edge_params_container.setVisible(index < 4) # 4 is None
         
-        # 默认显示两个参数
         self.c_e1.setVisible(True)
         self.c_e2.setVisible(True)
         
         if index == 0: # Sobel
             self._update_param_ui(self.c_e1, "Sobel 阈值:", 
-                                  "<p><b>Sobel 阈值：</b>控制黑色描边线条的灵敏度。</p>"
-                                  "<ul>"
-                                  "<li><b>值越小：</b>线条越密集、厚重，保留更多细节纹理。</li>"
-                                  "<li><b>值越大：</b>线条越稀疏、干净，仅保留主要轮廓。</li>"
-                                  "</ul>"
-                                  "<p><i>注：此参数仅影响后期黑线叠加，不影响色块形状。</i></p>", 
-                                  self.slider_e1, self.inp_e1)            # 隐藏无效参数
+                                  "<p><b>Sobel 阈值：</b>控制黑色描边线条的灵敏度。</p>", 
+                                  self.slider_e1, self.inp_e1)
             self.c_e2.setVisible(False)
-            self.inp_e1.setValue(50)
+            if not self.param_block_signal: self.inp_e1.setValue(50)
             
         elif index == 1: # Canny
-            self._update_param_ui(self.c_e1, "低阈值 (Low):", 
-                                  "Canny 边缘检测的低阈值。\n低于此值的像素点会被丢弃 (弱边缘)。", 
-                                  self.slider_e1, self.inp_e1)
-            self._update_param_ui(self.c_e2, "高阈值 (High):", 
-                                  "Canny 边缘检测的高阈值。\n高于此值的像素点被认为是强边缘 (一定会保留)。", 
-                                  self.slider_e2, self.inp_e2)
-            self.inp_e1.setValue(50)
-            self.inp_e2.setValue(150)
+            self._update_param_ui(self.c_e1, "低阈值 (Low):", "Canny Low Threshold", self.slider_e1, self.inp_e1)
+            self._update_param_ui(self.c_e2, "高阈值 (High):", "Canny High Threshold", self.slider_e2, self.inp_e2)
+            if not self.param_block_signal: 
+                self.inp_e1.setValue(50)
+                self.inp_e2.setValue(150)
             
-        elif index == 2: # Lineart
-            self._update_param_ui(self.c_e1, "块大小 (Block):", 
-                                  "Lineart 自适应阈值的邻域块大小 (必须为奇数)。\n决定了局部对比度的计算范围。", 
+        elif index == 2: # Lineart (自适应阈值)
+            # ---------------------------------------------------------
+            # 块大小 (Block Size) - 决定“看多远”
+            # ---------------------------------------------------------
+            self._update_param_ui(self.c_e1, "细节程度 (Block):", 
+                                  "<p><b>Block Size (邻域大小):</b> 决定计算边缘时的“视野范围”。</p>"
+                                  "<ul>"
+                                  "<li><b>数值越小：</b>视野窄，对局部纹理敏感，线条极其丰富、细碎（适合画质清晰的原图）。</li>"
+                                  "<li><b>数值越大：</b>视野宽，忽略微小噪点，线条更连贯、概括（适合去除杂乱纹理）。</li>"
+                                  "</ul>"
+                                  "<p><i>注：此数值必须为奇数，程序会自动调整。</i></p>", 
                                   self.slider_e1, self.inp_e1)
-            self._update_param_ui(self.c_e2, "常数 C:", 
-                                  "从平均值中减去的常数。\n用于微调黑白分界线，去除背景噪点。", 
+            
+            # ---------------------------------------------------------
+            # 常数 C (Constant) - 决定“有多严”
+            # ---------------------------------------------------------
+            self._update_param_ui(self.c_e2, "过滤强度 (C):", 
+                                  "<p><b>Constant C (减去的常数):</b> 决定判定为黑线的“门槛”。</p>"
+                                  "<ul>"
+                                  "<li><b>数值越小：</b>门槛低，非常灵敏。浅色阴影、淡线条都会被提取出来（容易显脏）。</li>"
+                                  "<li><b>数值越大：</b>门槛高，非常严格。只有对比度极强（很黑）的线条会被保留（画面更干净）。</li>"
+                                  "</ul>"
+                                  "<p><i>技巧：如果画面噪点太多，请调大此值；如果线条断断续续，请调小此值。</i></p>", 
                                   self.slider_e2, self.inp_e2)
-            self.inp_e1.setValue(7)
-            self.inp_e2.setValue(2)
+            
+            if not self.param_block_signal:
+                self.inp_e1.setValue(7)  # 默认较小的 Block，保留细节
+                self.inp_e2.setValue(2)  # 默认较小的 C，保留线条
+
+        elif index == 3: # DoG (New)
+            self._update_param_ui(self.c_e1, "笔触粗细 (Sigma):", 
+                                  "<p><b>Sigma 1:</b> 决定线条的模糊半径与粗细。</p>"
+                                  "<p>值越大，线条越粗，细节越少；值越小，线条越细。</p>", 
+                                  self.slider_e1, self.inp_e1)
+            self._update_param_ui(self.c_e2, "黑度阈值 (Tau):", 
+                                  "<p><b>Tau Threshold:</b> 决定哪些灰度会被判定为黑线。</p>"
+                                  "<p>值越大，只有极黑的线条被保留；值越小，浅色阴影也会变成黑线。</p>", 
+                                  self.slider_e2, self.inp_e2)
+            if not self.param_block_signal:
+                self.inp_e1.setValue(10) # ~Sigma 1.0
+                self.inp_e2.setValue(100) # ~Tau Adjustment
 
     def update_param_labels(self, index):
-        # 当核心算法不是硬边缘时，隐藏防溢色滑块
         self.core_edge_container.setVisible(index == 0)
         
         if index == 0: # HTML Hard
-            self._update_param_ui(self.c_s1, "预处理平滑 (Space):", 
-                                  "<p><b>Space Sigma (Blur):</b> 预处理时的模糊程度。值越大，细节越少，生成的色块越大。</p>", 
-                                  self.slider_s1, self.inp_s1)
-            self._update_param_ui(self.c_s2, "颜色相似度 (Color):", 
-                                  "<p><b>Color Sigma (Sim):</b> 颜色归类的容差。值越小，保留更多颜色细节；值越大，颜色越单一。</p>", 
-                                  self.slider_s2, self.inp_s2)
+            self._update_param_ui(self.c_s1, "预处理平滑 (Space):", "Space Sigma", self.slider_s1, self.inp_s1)
+            self._update_param_ui(self.c_s2, "颜色相似度 (Color):", "Color Sigma", self.slider_s2, self.inp_s2)
         elif index == 1: # Bilateral
-            self._update_param_ui(self.c_s1, "双边直径 (Diameter):", 
-                                  "<p><b>Diameter/Space:</b> 滤波时的像素邻域直径。直接决定磨皮/平滑的范围。</p>", 
-                                  self.slider_s1, self.inp_s1)
-            self._update_param_ui(self.c_s2, "色彩权重 (Sigma Color):", 
-                                  "<p><b>Sigma Color:</b> 颜色混合的阈值。值越大，差异大的颜色也会被混合。</p>", 
-                                  self.slider_s2, self.inp_s2)
+            self._update_param_ui(self.c_s1, "双边直径 (Diameter):", "Pixel Neighborhood Diameter", self.slider_s1, self.inp_s1)
+            self._update_param_ui(self.c_s2, "色彩权重 (Sigma Color):", "Color Mixing Threshold", self.slider_s2, self.inp_s2)
         elif index == 2: # MeanShift
-            self._update_param_ui(self.c_s1, "物理半径 (Spatial):", 
-                                  "<p><b>Spatial Radius (sp):</b> 均值漂移的物理空间窗口大小。</p>", 
-                                  self.slider_s1, self.inp_s1)
-            self._update_param_ui(self.c_s2, "色差半径 (Color):", 
-                                  "<p><b>Color Radius (sr):</b> 均值漂移的颜色空间窗口大小。决定涂抹感强弱。</p>", 
-                                  self.slider_s2, self.inp_s2)
+            self._update_param_ui(self.c_s1, "物理半径 (Spatial):", "Spatial Radius", self.slider_s1, self.inp_s1)
+            self._update_param_ui(self.c_s2, "色差半径 (Color):", "Color Radius", self.slider_s2, self.inp_s2)
 
     def reset_parameters(self):
         self.param_block_signal = True
@@ -784,7 +764,6 @@ class MainWindow(QMainWindow):
     # ================= 历史记录核心逻辑 =================
     
     def get_current_params(self):
-        """获取当前UI参数快照"""
         return {
             'method_idx': self.combo_algo.currentIndex(),
             'sigma_space': self.inp_s1.value(),
@@ -798,7 +777,6 @@ class MainWindow(QMainWindow):
         }
 
     def apply_params(self, params):
-        """将参数快照应用到UI，不触发重算"""
         self.param_block_signal = True
         try:
             self.combo_algo.setCurrentIndex(params.get('method_idx', 0))
@@ -918,11 +896,16 @@ class MainWindow(QMainWindow):
                     self.layer_table.insertRow(row)
                     self.layer_table.setRowHeight(row, 58)
                     
+                    # [修复] 复选框居中问题
                     chk_widget = QWidget()
                     chk_layout = QHBoxLayout(chk_widget)
                     chk_layout.setContentsMargins(0,0,0,0) 
+                    chk_layout.setSpacing(0)
                     chk_layout.setAlignment(Qt.AlignmentFlag.AlignCenter) 
+                    
                     checkbox = QCheckBox()
+                    # 覆盖全局 QCheckBox 样式，移除 margin-left 以保证完美居中
+                    checkbox.setStyleSheet("margin-left: 0px; margin-right: 0px; spacing: 0px;")
                     checkbox.setChecked(True) 
                     chk_layout.addWidget(checkbox)
                     self.layer_table.setCellWidget(row, 0, chk_widget)
@@ -978,25 +961,18 @@ class MainWindow(QMainWindow):
             else:
                 self.refresh_current_view()
 
-    # [Added] 批量切换显示模式的槽函数
     def batch_toggle_edge_mode(self):
-        # 更新全局状态：0->1->2->0
         self.batch_edge_mode_state = (self.batch_edge_mode_state + 1) % 3
         
-        # 更新主按钮图标
         if self.batch_edge_mode_state == 0: self.btn_batch_toggle_mode.setIcon(self.icon_overlay)
         elif self.batch_edge_mode_state == 1: self.btn_batch_toggle_mode.setIcon(self.icon_clean)
         elif self.batch_edge_mode_state == 2: self.btn_batch_toggle_mode.setIcon(self.icon_edge)
         
-        # 遍历并更新选中行
         needs_refresh = False
         for i in range(self.layer_table.rowCount()):
             chk = self.get_row_checkbox(i, 0)
             if chk and chk.isChecked():
-                # 更新数据
                 self.images_data[i]['edge_mode'] = self.batch_edge_mode_state
-                
-                # 更新行内小按钮图标
                 widget = self.layer_table.cellWidget(i, 2)
                 if widget:
                     btn = widget.findChild(QPushButton)
@@ -1004,8 +980,6 @@ class MainWindow(QMainWindow):
                         if self.batch_edge_mode_state == 0: btn.setIcon(self.icon_overlay)
                         elif self.batch_edge_mode_state == 1: btn.setIcon(self.icon_clean)
                         elif self.batch_edge_mode_state == 2: btn.setIcon(self.icon_edge)
-                
-                # 如果当前显示的图片在批量更新范围内，标记刷新
                 if i == self.current_tab_index:
                     needs_refresh = True
 
@@ -1158,8 +1132,8 @@ class MainWindow(QMainWindow):
         if idx == 0: e_mode = 'sobel'
         elif idx == 1: e_mode = 'canny'
         elif idx == 2: e_mode = 'adaptive'
+        elif idx == 3: e_mode = 'dog'
 
-        # [Fix 1] 在点击执行时获取参数快照，并锁定在 processing loop 中
         params = {
             'method': 'html_hard' if self.combo_algo.currentIndex() == 0 else 'bilateral' if self.combo_algo.currentIndex() == 1 else 'meanshift',
             'sigma_color': self.inp_s2.value(), 
@@ -1212,9 +1186,7 @@ class MainWindow(QMainWindow):
             self.images_data[idx]['edges'] = edges
             self.images_data[idx]['is_processed'] = True
             
-            # [Fix 1] 使用处理开始时捕获的 ui_snapshot 存入历史
             self.push_history(idx, processed_img, edges, ui_snapshot)
-            
             self.update_row_edge_icon(idx)
         
         self.batch_finished += 1
@@ -1248,14 +1220,10 @@ class MainWindow(QMainWindow):
             mode = data['edge_mode']
             final = None
             
-            # [Revised Logic] Handle Transparency for Mode 2 (Edge Only)
             if mode == 2: # Edge Only - Transparent BG
                  if data.get('edges') is not None:
-                     # edges is 255 for edge, 0 for bg
                      edges = data['edges']
                      h, w = edges.shape
-                     # Create BGRA (4 channel)
-                     # RGB = Black (0,0,0), Alpha = Edges
                      b = np.zeros((h,w), dtype=np.uint8)
                      g = np.zeros((h,w), dtype=np.uint8)
                      r = np.zeros((h,w), dtype=np.uint8)
@@ -1274,18 +1242,15 @@ class MainWindow(QMainWindow):
                     final = base
             
             if final is not None:
-                # [Revised Logic] Filename handling with _output
                 base_name = os.path.splitext(data['name'])[0] + "_output"
                 ext = ".png"
                 save_path = os.path.join(dir_path, base_name + ext)
                 
-                # Duplicate check
                 counter = 1
                 while os.path.exists(save_path):
                     save_path = os.path.join(dir_path, f"{base_name}_{counter}{ext}")
                     counter += 1
                 
-                # Use imencode + tofile to support unicode paths (Chinese)
                 is_success, im_buf_arr = cv2.imencode(ext, final)
                 if is_success:
                     im_buf_arr.tofile(save_path)
@@ -1295,9 +1260,7 @@ class MainWindow(QMainWindow):
 
 if __name__ == '__main__':
     try:
-        # [新增] 设置 AppUserModelID
-        # 这行代码告诉 Windows：“我是一个独立的应用程序”，从而让任务栏显示正确的图标
-        myappid = 'mycompany.minimaliststylizer.v1.0' # 任意唯一的字符串
+        myappid = 'mycompany.minimaliststylizer.v1.0' 
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     except:
         pass
