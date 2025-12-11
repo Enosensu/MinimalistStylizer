@@ -50,7 +50,7 @@ class ResourceManager:
         except: pass
 
 RES_MANAGER = ResourceManager()
-ICON_CHECK_WHITE = 'url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABmJLR0QA/wD/AP+gvaeTAAAAbklEQVQ4je2S0Q3AIAxD78M6Q3dI958u0g3Sqf+0Ug0i+sA5X6wEcOzYJAn8M2RInz1CDsCR09puvZaF/CAlhHnN77y2CwBExN3+rNfS6iBvB3k7yN9B/g7+d/C/g/8d/O/g/8d/O/g/8d/O/g7yDvIC7wB/k0315YVvOAAAAAASUVORK5CYII=")'
+ICON_CHECK_WHITE = 'url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABmJLR0QA/wD/AP+gvaeTAAAAbklEQVQ4je2S0Q3AIAxD78M6Q3dI958u0g3Sqf+0Ug0i+sA5X6wEcOzYJAn8M2RInz1CDsCR09puvZaF/CAlhHnN77y2CwBExN3+rNfS6iBvB3k7yN9B/g7+d/C/g/8d/O/g/8d/O/g/8d/O/g/8d/O/g7yDvIC7wB/k0315YVvOAAAAAASUVORK5CYII=")'
 ICON_UP_PATH = RES_MANAGER.get_icon_url("up")
 ICON_DOWN_PATH = RES_MANAGER.get_icon_url("down")
 
@@ -164,9 +164,20 @@ class ImageProcessingThread(QThread):
             result_np = result_u.get()
             if self.params.get('enable_kmeans', False):
                 k = self.params.get('k_value', 8)
+                kmeans_mode_str = self.params.get('kmeans_init', 'pp') # 'pp' or 'random'
+                
                 z = result_np.reshape((-1, 3)).astype(np.float32)
                 criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
-                ret, label, center = cv2.kmeans(z, int(k), None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
+                
+                # [核心修改] K-Means++ vs Random 选择
+                if kmeans_mode_str == 'random':
+                    flags = cv2.KMEANS_RANDOM_CENTERS
+                else:
+                    flags = cv2.KMEANS_PP_CENTERS
+                
+                # 运行 K-Means
+                ret, label, center = cv2.kmeans(z, int(k), None, criteria, 10, flags)
+                
                 center = np.uint8(center)
                 res = center[label.flatten()]
                 result_np = res.reshape((result_np.shape))
@@ -181,12 +192,10 @@ class ImageProcessingThread(QThread):
                 t2 = self.params.get('canny_t2', 150)
                 
                 if edge_mode == 'canny':
-                    # Canny: 返回的是白线黑底，直接可用
                     edges_out = cv2.Canny(gray_final, t1, t2)
                     final_edges_mask = edges_out.get() if hasattr(edges_out, 'get') else edges_out
 
                 elif edge_mode == 'sobel': 
-                    # Sobel
                     grad_x = cv2.Sobel(gray_final, cv2.CV_32F, 1, 0, ksize=3)
                     grad_y = cv2.Sobel(gray_final, cv2.CV_32F, 0, 1, ksize=3)
                     abs_grad_x = cv2.convertScaleAbs(grad_x)
@@ -196,16 +205,13 @@ class ImageProcessingThread(QThread):
                     final_edges_mask = edges_thresh.get() if hasattr(edges_thresh, 'get') else edges_thresh
 
                 elif edge_mode == 'adaptive':
-                    # Adaptive
                     gray_np_final = gray_final.get()
                     b_size = t1 if t1 % 2 == 1 else t1 + 1
                     if b_size < 3: b_size = 3
-                    # GAUSSIAN_C 返回白底黑线，INV 后变成黑底白线 (Mask)
                     edges_np = cv2.adaptiveThreshold(gray_np_final, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, b_size, t2)
                     final_edges_mask = edges_np
 
                 elif edge_mode == 'dog':
-                    # [新增] DoG 高斯差分 (素描风格)
                     gray_np = gray_final.get()
                     sigma1 = max(0.1, t1 / 10.0) 
                     sigma2 = sigma1 * 2.0
@@ -373,7 +379,7 @@ class SyncImageViewer(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MinimalistStylizer")
+        self.setWindowTitle("MinimalistStylizer (Pro)")
         self.resize(1600, 950)
         icon_path = resource_path("app_icon.ico")
         if os.path.exists(icon_path):
@@ -451,6 +457,18 @@ class MainWindow(QMainWindow):
 
         group_kmeans = QGroupBox("2. 极简风去噪 (K-Means)"); gk_layout = QVBoxLayout()
         self.chk_kmeans = QPushButton("启用颜色量化"); self.chk_kmeans.setCheckable(True); self.chk_kmeans.setChecked(True); self.chk_kmeans.setToolTip("<p>强制将全图颜色限制在固定的数量内。</p>")
+        
+        # [NEW] K-Means 初始化模式选择
+        self.combo_kmeans_init = QComboBox()
+        self.combo_kmeans_init.addItems(["K-Means++ (高质/稳定)", "Random (极速/随机)"])
+        self.combo_kmeans_init.setToolTip(
+            "<p><b>选择聚类中心的初始化算法：</b></p>"
+            "<ul>"
+            "<li><b>K-Means++ (推荐):</b> 算法智能选择初始中心点，颜色还原更精准，结果更稳定（消除随机色块抖动），但初始化略慢。</li>"
+            "<li><b>Random:</b> 完全随机选择初始点。速度极快，但容易陷入局部最优（可能导致大片区域颜色分割不理想）。</li>"
+            "</ul>"
+        )
+        
         k_layout_container = QWidget(); k_vlayout = QVBoxLayout(k_layout_container); k_vlayout.setContentsMargins(0,0,0,0)
         k_head_layout = QHBoxLayout(); k_head_layout.addWidget(QLabel("色块数量 (K):"))
         btn_rec_k = QPushButton("推荐"); btn_rec_k.setFixedWidth(40); btn_rec_k.setFixedHeight(18); btn_rec_k.setStyleSheet("font-size:10px; padding:0px;") 
@@ -460,7 +478,12 @@ class MainWindow(QMainWindow):
         self.slider_k = QSlider(Qt.Orientation.Horizontal); self.slider_k.setRange(2, 64); self.slider_k.setValue(8)
         self.inp_k.valueChanged.connect(self.slider_k.setValue); self.slider_k.valueChanged.connect(self.inp_k.setValue)
         k_input_layout = QHBoxLayout(); k_input_layout.addWidget(self.slider_k); k_input_layout.addWidget(self.inp_k)
-        k_vlayout.addLayout(k_input_layout); gk_layout.addWidget(self.chk_kmeans); gk_layout.addWidget(k_layout_container); group_kmeans.setLayout(gk_layout); scroll_layout.addWidget(group_kmeans)
+        
+        k_vlayout.addLayout(k_input_layout)
+        gk_layout.addWidget(self.chk_kmeans)
+        gk_layout.addWidget(self.combo_kmeans_init) # Added here
+        gk_layout.addWidget(k_layout_container)
+        group_kmeans.setLayout(gk_layout); scroll_layout.addWidget(group_kmeans)
 
         group_edge = QGroupBox("3. 边缘增强 & 防溢色"); group_edge.setToolTip("<p><b>边缘检测作用:</b> 仅用于生成覆盖在色块上方的黑色描边层，<b>不再影响核心色块形状</b>。</p>")
         ge_layout = QVBoxLayout()
@@ -728,6 +751,7 @@ class MainWindow(QMainWindow):
         self.inp_s2.setValue(15)
         self.inp_core_edge.setValue(50) 
         self.chk_kmeans.setChecked(True)
+        self.combo_kmeans_init.setCurrentIndex(0) # Default K-Means++
         self.inp_k.setValue(8)
         self.combo_edge.setCurrentIndex(0) 
         self.inp_e1.setValue(50)
@@ -770,6 +794,7 @@ class MainWindow(QMainWindow):
             'sigma_color': self.inp_s2.value(),
             'core_edge_thresh': self.inp_core_edge.value(), 
             'kmeans': self.chk_kmeans.isChecked(),
+            'kmeans_init_idx': self.combo_kmeans_init.currentIndex(), # Save K-Means init mode
             'k_value': self.inp_k.value(),
             'edge_idx': self.combo_edge.currentIndex(),
             'edge_t1': self.inp_e1.value(),
@@ -784,6 +809,7 @@ class MainWindow(QMainWindow):
             self.inp_s2.setValue(params.get('sigma_color', 15))
             self.inp_core_edge.setValue(params.get('core_edge_thresh', 50)) 
             self.chk_kmeans.setChecked(params.get('kmeans', True))
+            self.combo_kmeans_init.setCurrentIndex(params.get('kmeans_init_idx', 0)) # Restore K-Means init mode
             self.inp_k.setValue(params.get('k_value', 8))
             self.combo_edge.setCurrentIndex(params.get('edge_idx', 0))
             self.inp_e1.setValue(params.get('edge_t1', 50))
@@ -1133,6 +1159,9 @@ class MainWindow(QMainWindow):
         elif idx == 1: e_mode = 'canny'
         elif idx == 2: e_mode = 'adaptive'
         elif idx == 3: e_mode = 'dog'
+        
+        # [NEW] 获取 UI 选择的 K-Means 模式
+        init_mode = 'pp' if self.combo_kmeans_init.currentIndex() == 0 else 'random'
 
         params = {
             'method': 'html_hard' if self.combo_algo.currentIndex() == 0 else 'bilateral' if self.combo_algo.currentIndex() == 1 else 'meanshift',
@@ -1140,6 +1169,7 @@ class MainWindow(QMainWindow):
             'sigma_space': self.inp_s1.value(),
             'sp': self.inp_s1.value(), 'sr': self.inp_s2.value(),
             'enable_kmeans': self.chk_kmeans.isChecked(),
+            'kmeans_init': init_mode, # 传递模式
             'k_value': self.inp_k.value(),
             'edge_mode': e_mode,
             'canny_t1': self.inp_e1.value(), 'canny_t2': self.inp_e2.value(),
